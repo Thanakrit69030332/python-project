@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="th">
 <head>
@@ -21,18 +22,18 @@
             border-radius: 12px;
         }
 
-        input, button {
+        button {
             box-sizing: border-box;
             width: 100%;
             padding: 12px;
             margin-top: 10px;
             font-size: 16px;
+            cursor: pointer;
         }
 
-        video {
+        #reader {
             width: 100%;
             margin-top: 12px;
-            border-radius: 8px;
         }
 
         #message {
@@ -45,47 +46,38 @@
 <body>
 <main>
     <h2>เช็กชื่อนักเรียน</h2>
-    <p>สแกน QR Code ที่มีรหัสนักเรียน</p>
+    <p>กดปุ่มเพื่อเปิดกล้องและสแกน QR Code</p>
 
-    <video id="video" autoplay playsinline hidden></video>
+    <div id="reader"></div>
 
     <button id="startButton" type="button">
         เปิดกล้องเพื่อสแกน
     </button>
 
-    <label for="studentId">รหัสนักเรียน</label>
-    <input id="studentId"
-           type="text"
-           placeholder="เช่น 65001"
-           autocomplete="off">
-
-    <button id="submitButton" type="button">
-        ส่งข้อมูลเช็กชื่อ
-    </button>
-
     <p id="message" role="status"></p>
 </main>
 
+<!-- ไลบรารีสำหรับอ่าน QR Code -->
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js">
+</script>
+
 <script>
-    const video = document.getElementById("video");
-    const studentInput = document.getElementById("studentId");
     const message = document.getElementById("message");
     const startButton = document.getElementById("startButton");
-    const submitButton = document.getElementById("submitButton");
 
-    let stream = null;
+    const scanner = new Html5Qrcode("reader");
+
     let scanning = false;
     let submitting = false;
-    let detector = null;
-    let lastScanned = "";
 
+    // ส่งรหัสนักเรียนไปตรวจสอบและบันทึก
     async function submitAttendance(studentId) {
-        studentId = String(studentId).trim();
 
         if (!studentId || submitting) return;
 
         submitting = true;
-        submitButton.disabled = true;
+        startButton.disabled = true;
+
         message.textContent = "กำลังบันทึกข้อมูล...";
 
         try {
@@ -102,91 +94,93 @@
             const result = await response.json();
 
             message.textContent = result.message;
-            lastScanned = studentId;
 
-            if (result.success) {
-                studentInput.value = "";
-            }
         } catch (error) {
+
             message.textContent =
                 "ส่งข้อมูลไม่ได้ กรุณาตรวจสอบเครือข่าย";
+
         } finally {
+
             submitting = false;
-            submitButton.disabled = false;
+            startButton.disabled = false;
+            startButton.textContent = "สแกนอีกครั้ง";
         }
     }
 
-    submitButton.addEventListener("click", () => {
-        submitAttendance(studentInput.value);
-    });
-
-    async function scanLoop() {
-        if (!scanning || !detector) return;
-
-        try {
-            if (video.readyState >= 2) {
-                const codes = await detector.detect(video);
-
-                if (codes.length > 0) {
-                    const value = codes[0].rawValue.trim();
-
-                    if (value && value !== lastScanned) {
-                        studentInput.value = value;
-                        await submitAttendance(value);
-                    }
-                }
-            }
-        } catch (error) {
-            // กล้องอาจอ่านภาพไม่สำเร็จในบางเฟรม
-        }
-
-        if (scanning) {
-            requestAnimationFrame(scanLoop);
-        }
-    }
-
+    // เริ่มเปิดกล้อง
     async function startScanner() {
+
+        if (scanning || submitting) return;
+
         try {
-            if (!("BarcodeDetector" in window)) {
-                message.textContent =
-                    "เบราว์เซอร์นี้ไม่รองรับตัวอ่าน QR Code " +
-                    "กรุณาใช้ Chrome ที่รองรับ หรือพิมพ์รหัสทดสอบ";
-                return;
-            }
 
-            detector = new BarcodeDetector({
-                formats: ["qr_code"]
-            });
+            message.textContent = "กำลังเปิดกล้อง...";
 
-            stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: "environment" },
-                audio: false
-            });
+            await scanner.start(
+                { facingMode: "environment" },
 
-            video.srcObject = stream;
-            video.hidden = false;
-            await video.play();
+                {
+                    fps: 10,
+                    qrbox: {
+                        width: 250,
+                        height: 250
+                    }
+                },
+
+                async (decodedText) => {
+
+                    if (submitting) return;
+
+                    // หยุดกล้องหลังอ่าน QR สำเร็จ
+                    scanning = false;
+
+                    try {
+                        await scanner.stop();
+                    } catch (error) {
+                        console.log(error);
+                    }
+
+                    // ส่งรหัสนักเรียนไปยัง Flask
+                    await submitAttendance(decodedText.trim());
+                },
+
+                () => {
+                    // ยังอ่าน QR Code ไม่สำเร็จในเฟรมนี้
+                }
+            );
 
             scanning = true;
+
             startButton.textContent = "กำลังสแกน...";
-            scanLoop();
+            message.textContent = "กรุณานำ QR Code มาไว้หน้ากล้อง";
 
         } catch (error) {
+
+            scanning = false;
+
             message.textContent =
                 "เปิดกล้องไม่ได้ กรุณาอนุญาตการใช้กล้อง " +
                 "และตรวจสอบว่าเว็บไซต์ใช้ HTTPS";
+
+            startButton.textContent = "ลองเปิดกล้องอีกครั้ง";
         }
     }
 
     startButton.addEventListener("click", startScanner);
 
-    window.addEventListener("pagehide", () => {
-        scanning = false;
+    // ปิดกล้องเมื่อออกจากหน้าเว็บ
+    window.addEventListener("pagehide", async () => {
 
-        if (stream) {
-            stream.getTracks().forEach(track => track.stop());
+        if (scanning) {
+            try {
+                await scanner.stop();
+            } catch (error) {
+                console.log(error);
+            }
         }
     });
 </script>
+
 </body>
 </html>

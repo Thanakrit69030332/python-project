@@ -1,3 +1,4 @@
+
 from flask import Flask, jsonify, render_template, request
 
 from attendance import check_in_student
